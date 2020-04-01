@@ -20,6 +20,7 @@ import java.util.function.Consumer;
 
 public class Auth {
     private static final int PORT = 8080;
+    private static final String SCOPES = "user-read-playback-state user-modify-playback-state";
     private static final String REDIRECT_URI = String.format("http://localhost:%d", PORT);
     private static final File tokenFile = new File(System.getProperty("user.home") + File.separator + ".spotifyparty", "token");
     private static String clientID, clientSecret;
@@ -85,7 +86,7 @@ public class Auth {
 
     private static String getAuthCode(Consumer<URI> backup) {
         // Open the auth uri in the default browser
-        var uriReq = getAPI().authorizationCodeUri().build();
+        var uriReq = getAPI().authorizationCodeUri().scope(SCOPES).build();
         URI uri = uriReq.execute();
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
             try {
@@ -150,6 +151,7 @@ public class Auth {
         if (getAPI().getRefreshToken() == null) {
             try (Scanner in = new Scanner(new FileInputStream(tokenFile))) {
                 String token = in.nextLine();
+                refreshToken = token;
                 getAPI().setRefreshToken(token);
             } catch (FileNotFoundException e) {
                 throw new RuntimeException(e);
@@ -158,6 +160,7 @@ public class Auth {
         // Now use the refresh token to get a new access token
         try {
             var cred = getAPI().authorizationCodeRefresh().build().execute();
+            accessToken = cred.getAccessToken();
             getAPI().setAccessToken(cred.getAccessToken());
         } catch (IOException | SpotifyWebApiException e) {
             throw new RuntimeException(e);

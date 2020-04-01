@@ -1,21 +1,37 @@
 package com.coolioasjulio.spotify;
 
-import javax.swing.*;
+import com.google.gson.Gson;
+import com.google.gson.JsonParser;
+import com.wrapper.spotify.exceptions.SpotifyWebApiException;
+
+import java.io.IOException;
 
 public class Playground {
-    public static void main(String[] args) {
-        Auth.authenticate(uri -> {
-            Thread t = new Thread(() -> {
-                JTextArea area = new JTextArea(
-                        "Unable to open web page automatically.\n" +
-                                "Please copy/paste this url into your browser:\n" +
-                                uri.toString());
+    public static void main(String[] args) throws IOException, SpotifyWebApiException {
+        Auth.authenticate();
 
-                area.setEditable(false);
-                JOptionPane.showMessageDialog(null, area, "", JOptionPane.INFORMATION_MESSAGE);
-            });
-            t.setDaemon(true);
-            t.start();
-        });
+        Gson gson = new Gson();
+        if (false) {
+            var info = Auth.getAPI().getInformationAboutUsersCurrentPlayback().build().execute();
+            var state = new MusicManager.MusicState(info.getTimestamp(), info.getProgress_ms(), !info.getIs_playing(), info.getItem().getId());
+            String json = gson.toJson(state);
+            System.out.println(json);
+        } else {
+            var state = gson.fromJson("{\"timestamp\":1585782330707,\"songPos\":4618,\"isPaused\":false,\"songID\":\"3bjLCKsBNSFyx6Gfsb7X4h\"}", MusicManager.MusicState.class);
+            try {
+                String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
+                long currTime = System.currentTimeMillis();
+                int posMs = state.isPaused ? state.songPos : state.songPos + (int)(currTime - state.timestamp);
+                Auth.getAPI().startResumeUsersPlayback()
+                        .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
+                        .position_ms(posMs)
+                        .build().execute();
+                if (state.isPaused) {
+                    Auth.getAPI().pauseUsersPlayback().build().execute();
+                }
+            } catch (IOException | SpotifyWebApiException e) {
+                e.printStackTrace();
+            }
+        }
     }
 }
