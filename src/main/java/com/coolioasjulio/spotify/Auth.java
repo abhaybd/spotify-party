@@ -16,6 +16,7 @@ import java.net.ServerSocket;
 import java.net.URI;
 import java.util.Scanner;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public class Auth {
     private static final int PORT = 8080;
@@ -24,6 +25,7 @@ public class Auth {
     private static String clientID, clientSecret;
     private static String accessToken, refreshToken;
     private static SpotifyApi api;
+    private static Thread refreshThread;
 
     public static SpotifyApi getAPI() {
         if (api == null) {
@@ -73,18 +75,31 @@ public class Auth {
         }
     }
 
-    private static String getAuthCode() {
+    private static void startRefreshThread() {
+        if (refreshThread == null || !refreshThread.isAlive()) {
+            refreshThread = new Thread(Auth::refreshTask);
+            refreshThread.setDaemon(true);
+            refreshThread.start();
+        }
+    }
+
+    private static String getAuthCode(Consumer<URI> backup) {
+        // Open the auth uri in the default browser
+        var uriReq = getAPI().authorizationCodeUri().build();
+        URI uri = uriReq.execute();
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-            var uriReq = getAPI().authorizationCodeUri().build();
-            URI uri = uriReq.execute();
             try {
                 Desktop.getDesktop().browse(uri);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
+        } else if (backup != null) {
+            backup.accept(uri);
+        } else {
+            throw new IllegalStateException("Unable to open authentication uri!");
         }
         String code;
-        try (ServerSocket serverSocket = new ServerSocket(PORT)){
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             var socket = serverSocket.accept();
             var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             String req = in.readLine();
@@ -109,15 +124,18 @@ public class Auth {
         return code;
     }
 
-    private static void authenticateFromScratch() {
-        String code = getAuthCode();
+    private static void authenticateFromScratch(Consumer<URI> backup) {
+        // Get the authorization code (this goes through the browser process and everything)
+        String code = getAuthCode(backup);
         try {
+            // exchange the code for the access and refresh tokens
             var cred = getAPI().authorizationCode(code).build().execute();
             accessToken = cred.getAccessToken();
             refreshToken = cred.getRefreshToken();
             getAPI().setAccessToken(accessToken);
             getAPI().setRefreshToken(refreshToken);
 
+            // Save the refresh token to disk
             tokenFile.getParentFile().mkdirs();
             PrintStream out = new PrintStream(tokenFile);
             out.println(refreshToken);
@@ -128,6 +146,7 @@ public class Auth {
     }
 
     public static void refresh() {
+        // If we don't have a refresh token set, load from disk
         if (getAPI().getRefreshToken() == null) {
             try (Scanner in = new Scanner(new FileInputStream(tokenFile))) {
                 String token = in.nextLine();
@@ -136,21 +155,38 @@ public class Auth {
                 throw new RuntimeException(e);
             }
         }
+        // Now use the refresh token to get a new access token
         try {
             var cred = getAPI().authorizationCodeRefresh().build().execute();
             getAPI().setAccessToken(cred.getAccessToken());
         } catch (IOException | SpotifyWebApiException e) {
             throw new RuntimeException(e);
         }
+        // Periodically refresh the access token
+        startRefreshThread();
     }
 
     public static void authenticate() {
+        authenticate(null);
+    }
+
+    /**
+     * Authenticate with spotify. This should be done once at startup.
+     *
+     * @param backup If this platform doesn't support opening webpages,
+     *               then this consumer will be called with the URI to show to the user.
+     *               This may be null, but an exception will be thrown instead of using the backup.
+     */
+    public static void authenticate(Consumer<URI> backup) {
+        // If we have a cached refresh token, use it to silently get an access token
         if (tokenFile.isFile()) {
             System.out.println("Cached refresh token found! Refreshing...");
             refresh();
         } else {
+            // Otherwise, go through the entire authentication process
             System.out.println("No cache found! Authenticating...");
-            authenticateFromScratch();
+            authenticateFromScratch(backup);
+            startRefreshThread();
         }
     }
 }
