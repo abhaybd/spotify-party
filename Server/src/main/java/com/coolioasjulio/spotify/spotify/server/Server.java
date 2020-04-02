@@ -53,6 +53,64 @@ public class Server {
         t.start();
     }
 
+    private void handleCreateSession(Socket s, BufferedReader in, PrintStream out) {
+        UUID uuid = UUID.randomUUID();
+        out.println(uuid.toString());
+        out.flush();
+        Party p = new Party(new Member(s, in, out));
+        partyMap.put(uuid, p);
+        try {
+            while (!Thread.interrupted()) {
+                String line = in.readLine();
+                if (line == null) break; // stream closed
+                System.out.printf("%s : %s\n", p.host.socket.getInetAddress(), line);
+                List<Member> toRemove = new ArrayList<>();
+                for (int i = 0; i < p.members.size(); i++) {
+                    Member m = p.members.get(i);
+                    m.out.println(line);
+                    m.out.flush();
+                    if (m.out.checkError()) {
+                        m.socket.close();
+                        toRemove.add(m);
+                    }
+                }
+                if (p.members.removeAll(toRemove)) {
+                    out.println(p.members.size());
+                    out.flush();
+                }
+                Thread.yield();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            partyMap.remove(uuid);
+            for (Member m : p.members) {
+                try {
+                    m.socket.close();
+                } catch (IOException ex) {
+                    ex.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private void handleJoinSession(Socket s, BufferedReader in, PrintStream out, InitialRequest req) {
+        UUID uuid = null;
+        try {
+            uuid = UUID.fromString(req.id);
+        } catch (IllegalArgumentException ignored) {}
+        if (uuid != null && partyMap.containsKey(uuid)) {
+            out.println(uuid.toString());
+            out.flush();
+            Party party = partyMap.get(uuid);
+            party.members.add(new Member(s, in, out));
+            party.host.out.println(party.members.size());
+            party.host.out.flush();
+        } else {
+            error(s, out);
+        }
+    }
+
     private void sessionTask(Socket s) {
         BufferedReader in;
         PrintStream out;
@@ -68,46 +126,21 @@ public class Server {
         }
         System.out.println("Received request: " + req.toString());
         if (req.create) {
-            UUID uuid = UUID.randomUUID();
-            Party p = new Party(new Member(s, in, out));
-            partyMap.put(uuid, p);
-            try {
-                while (!Thread.interrupted()) {
-                    String line = in.readLine();
-                    System.out.printf("%s : %s\n", p.host.socket.getInetAddress(), line);
-                    List<Member> toRemove = new ArrayList<>();
-                    for (int i = 0; i < p.members.size(); i++) {
-                        Member m = p.members.get(i);
-                        m.out.println(line);
-                        m.out.flush();
-                        if (m.out.checkError()) {
-                            m.socket.close();
-                            toRemove.add(m);
-                        }
-                    }
-                    toRemove.forEach(p.members::remove);
-                }
-            } catch (IOException e) {
-                partyMap.remove(uuid);
-                for (Member m : p.members) {
-                    try {
-                        m.socket.close();
-                    } catch (IOException ex) {
-                        ex.printStackTrace();
-                    }
-                }
-            }
-        } else if (req.id != null && partyMap.containsKey(UUID.fromString(req.id))) {
-            UUID uuid = UUID.fromString(req.id);
-            partyMap.get(uuid).members.add(new Member(s, in, out));
+            handleCreateSession(s, in, out);
+        } else if (req.id != null) {
+            handleJoinSession(s, in, out, req);
         } else {
-            try {
-                out.println("ERROR 400");
-                out.flush();
-                s.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            error(s, out);
+        }
+    }
+
+    private void error(Socket s, PrintStream out) {
+        try {
+            out.println("ERROR 400");
+            out.flush();
+            s.close();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 

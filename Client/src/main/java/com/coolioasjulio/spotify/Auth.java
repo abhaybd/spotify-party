@@ -127,6 +127,7 @@ public class Auth {
 
     private static void authenticateFromScratch(Consumer<URI> backup) {
         // Get the authorization code (this goes through the browser process and everything)
+        api = null; // reset the api object
         String code = getAuthCode(backup);
         try {
             // exchange the code for the access and refresh tokens
