@@ -26,6 +26,7 @@ public class MusicManager {
         try {
             String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
             var info = Auth.getAPI().getInformationAboutUsersCurrentPlayback().build().execute();
+            if (info == null) return;
             // If we're more than 50ms out of sync or we're pausing, resync
             // there's theoretically a 50ms delay on unpausing, but I doubt that'll be an issue
             if (state.isPaused || Math.abs(info.getProgress_ms() - (state.songPos + (info.getTimestamp() - state.timestamp))) > 50) {

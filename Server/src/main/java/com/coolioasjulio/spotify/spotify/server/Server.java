@@ -56,15 +56,16 @@ public class Server {
     private void sessionTask(Socket s) {
         BufferedReader in;
         PrintStream out;
+        InitialRequest req;
         try {
             in = new BufferedReader(new InputStreamReader(s.getInputStream()));
             out = new PrintStream(s.getOutputStream());
+            Gson gson = new Gson();
+            req = gson.fromJson(in.readLine(), InitialRequest.class);
         } catch (IOException e) {
             e.printStackTrace();
             return;
         }
-        Gson gson = new Gson();
-        var req = gson.fromJson(in, InitialRequest.class);
         System.out.println("Received request: " + req.toString());
         if (req.create) {
             UUID uuid = UUID.randomUUID();
