@@ -15,10 +15,12 @@ public class MusicManager {
         gson = new Gson();
     }
 
+    /**
+     * This doesn't prompt the server, so it should be called fairly regularly.
+     * It will block until data is read and processed.
+     */
     public void pullMusicState() {
         if (manager.isHost()) return;
-        manager.getOut().println("StateRequest");
-        manager.getOut().flush();
 
         MusicState state = gson.fromJson(manager.getIn(), MusicState.class);
         try {
