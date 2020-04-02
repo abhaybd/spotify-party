@@ -23,12 +23,17 @@ public class MusicManager {
         MusicState state = gson.fromJson(manager.getIn(), MusicState.class);
         try {
             String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
-            long currTime = System.currentTimeMillis();
-            int posMs = state.isPaused ? state.songPos : state.songPos + (int)(currTime - state.timestamp);
-            Auth.getAPI().startResumeUsersPlayback()
-                    .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
-                    .position_ms(posMs)
-                    .build().execute();
+            var info = Auth.getAPI().getInformationAboutUsersCurrentPlayback().build().execute();
+            // If we're more than 50ms out of sync or we're pausing, resync
+            // there's theoretically a 50ms delay on unpausing, but I doubt that'll be an issue
+            if (state.isPaused || Math.abs(info.getProgress_ms() - (state.songPos + (info.getTimestamp() - state.timestamp))) > 50) {
+                long currTime = System.currentTimeMillis();
+                int posMs = state.isPaused ? state.songPos : state.songPos + (int)(currTime - state.timestamp);
+                Auth.getAPI().startResumeUsersPlayback()
+                        .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
+                        .position_ms(posMs)
+                        .build().execute();
+            }
             if (state.isPaused) {
                 Auth.getAPI().pauseUsersPlayback().build().execute();
             }
