@@ -42,11 +42,14 @@ public class MusicManager {
     public boolean pullMusicState() {
         if (manager.isHost()) return false;
 
-        MusicState state = gson.fromJson(manager.getIn(), MusicState.class);
         try {
+            String line = manager.getIn().readLine();
+            MusicState state = gson.fromJson(line, MusicState.class);
+            if (line == null) return false;
+
             String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
             var info = getPlaybackInfo();
-            if (info == null) return false;
+            if (info == null) return true;
             // If we're more than 50ms out of sync or we're pausing, resync
             // there's theoretically a 50ms delay on unpausing, but I doubt that'll be an issue
             if (state.isPaused || Math.abs(info.getProgress_ms() - (state.songPos + (info.getTimestamp() - state.timestamp))) > 50) {
@@ -63,7 +66,7 @@ public class MusicManager {
             return true;
         } catch (IOException | SpotifyWebApiException e) {
             e.printStackTrace();
-            return false;
+            throw new RuntimeException(e);
         }
     }
 
@@ -71,7 +74,7 @@ public class MusicManager {
         if (!manager.isHost()) return false;
         try {
             var info = getPlaybackInfo();
-            if (info == null) return false;
+            if (info == null) return true;
             var state = new MusicState(info.getTimestamp(), info.getProgress_ms(), !info.getIs_playing(), info.getItem().getId());
             String json = gson.toJson(state);
             manager.getOut().println(json);
@@ -79,7 +82,7 @@ public class MusicManager {
             return !manager.getOut().checkError();
         } catch (IOException | SpotifyWebApiException e) {
             e.printStackTrace();
-            return false;
+            throw new RuntimeException(e);
         }
     }
 

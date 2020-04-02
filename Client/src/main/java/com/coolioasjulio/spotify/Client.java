@@ -40,10 +40,24 @@ public class Client {
         while (!Thread.interrupted()) {
             synchronized (managerLock) {
                 if (partyManager != null && musicManager != null) {
-                    if (partyManager.isHost()) {
-                        musicManager.pushMusicState();
-                    } else {
-                        musicManager.pullMusicState();
+                    try {
+                        boolean running;
+                        if (partyManager.isHost()) {
+                            running = musicManager.pushMusicState();
+                        } else {
+                            running = musicManager.pullMusicState();
+                        }
+                        if (!running) {
+                            new Thread(() -> JOptionPane.showMessageDialog(gui.mainPanel,
+                                    "The party has ended!", "Info", JOptionPane.INFORMATION_MESSAGE)).start();
+                            leaveParty(null);
+                            break;
+                        }
+                    } catch (RuntimeException e) {
+                        new Thread(() -> JOptionPane.showMessageDialog(gui.mainPanel,
+                                "An error occurred! Restart the program!", "Error", JOptionPane.ERROR_MESSAGE)).start();
+                        leaveParty(null);
+                        break;
                     }
                 }
             }
@@ -140,34 +154,46 @@ public class Client {
     }
 
     private void createParty(ActionEvent e) {
-        disableExcept(gui.endPartyButton);
+        boolean success = false;
         synchronized (managerLock) {
             if (partyManager == null) {
                 partyManager = PartyManager.createParty();
-                musicManager = new MusicManager(partyManager);
-                gui.joinCodeCreateField.setText(partyManager.getId());
-            }
-        }
-        startMusicTask();
-        startMemberMonitorTask();
-    }
-
-    private void joinParty(ActionEvent e) {
-        String id = gui.joinCodeJoinField.getText();
-        PartyManager pm = PartyManager.joinParty(id);
-        if (pm != null) {
-            disableExcept(gui.leavePartyButton);
-            synchronized (managerLock) {
-                if (partyManager == null) {
-                    partyManager = pm;
+                success = partyManager != null;
+                if (success) {
                     musicManager = new MusicManager(partyManager);
                     gui.joinCodeCreateField.setText(partyManager.getId());
                 }
             }
+        }
+        if (success) {
             startMusicTask();
-            gui.connectionStatusLabel.setText("Connected!");
+            startMemberMonitorTask();
+            disableExcept(gui.endPartyButton);
         } else {
-            JOptionPane.showMessageDialog(gui.mainPanel, "Invalid party code!", "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(gui.mainPanel, "There was an error contacting the server!", "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void joinParty(ActionEvent e) {
+        try {
+            String id = gui.joinCodeJoinField.getText();
+            PartyManager pm = PartyManager.joinParty(id);
+            if (pm != null) {
+                disableExcept(gui.leavePartyButton);
+                synchronized (managerLock) {
+                    if (partyManager == null) {
+                        partyManager = pm;
+                        musicManager = new MusicManager(partyManager);
+                        gui.joinCodeCreateField.setText(partyManager.getId());
+                    }
+                }
+                startMusicTask();
+                gui.connectionStatusLabel.setText("Connected!");
+            } else {
+                JOptionPane.showMessageDialog(gui.mainPanel, "Invalid party code!", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        } catch (RuntimeException ex) {
+            JOptionPane.showMessageDialog(gui.mainPanel, "There was an error contacting the server!", "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 }

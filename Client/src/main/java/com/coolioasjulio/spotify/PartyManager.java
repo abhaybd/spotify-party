@@ -19,7 +19,12 @@ public class PartyManager implements Closeable {
     }
 
     public static PartyManager createParty() {
-        var manager = new PartyManager(true, null);
+        PartyManager manager;
+        try {
+            manager = new PartyManager(true, null);
+        } catch (RuntimeException e) {
+            return null;
+        }
         var req = new InitialRequest();
         req.create = true;
         manager.out.println(new Gson().toJson(req));
@@ -27,7 +32,8 @@ public class PartyManager implements Closeable {
         try {
             manager.id = manager.in.readLine();
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            manager.close();
+            return null;
         }
         return manager;
     }
