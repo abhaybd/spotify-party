@@ -5,8 +5,9 @@ public class Playground2 {
         Auth.authenticate();
         PartyManager pm = PartyManager.createParty();
         MusicManager mm = new MusicManager(pm);
-        while (true) {
-            mm.pushMusicState();
+        boolean running = true;
+        while (running) {
+            running = mm.pushMusicState();
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
