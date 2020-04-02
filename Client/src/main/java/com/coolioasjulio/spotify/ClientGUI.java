@@ -13,4 +13,6 @@ public class ClientGUI {
     public JButton joinPartyButton;
     public JLabel connectionStatusLabel;
     public JTextField joinCodeJoinField;
+    public JButton logOutButton;
+    public JLabel usernameLabel;
 }

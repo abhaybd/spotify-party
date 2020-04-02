@@ -28,12 +28,20 @@ public class Client {
         gui.createPartyButton.addActionListener(this::createParty);
         gui.leavePartyButton.addActionListener(this::leaveParty);
         gui.endPartyButton.addActionListener(this::leaveParty);
+        gui.logOutButton.addActionListener(this::logout);
+
+        Auth.getAPI().getCurrentUsersProfile().build().executeAsync()
+                .thenAccept(u -> gui.usernameLabel.setText("Logged in as: " + u.getDisplayName()));
 
         JFrame frame = new JFrame("Spotify Party");
         frame.setContentPane(gui.mainPanel);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.pack();
         frame.setVisible(true);
+    }
+
+    private void displayError(String error) {
+        JOptionPane.showMessageDialog(gui.mainPanel, error, "Error", JOptionPane.ERROR_MESSAGE);
     }
 
     private void musicTask() {
@@ -54,8 +62,7 @@ public class Client {
                             break;
                         }
                     } catch (RuntimeException e) {
-                        new Thread(() -> JOptionPane.showMessageDialog(gui.mainPanel,
-                                "An error occurred! Restart the program!", "Error", JOptionPane.ERROR_MESSAGE)).start();
+                        new Thread(() -> displayError("An error occurred! Restart the program!")).start();
                         leaveParty(null);
                         break;
                     }
@@ -124,6 +131,7 @@ public class Client {
         gui.createPartyButton.setEnabled(false);
         gui.joinPartyButton.setEnabled(false);
         gui.endPartyButton.setEnabled(false);
+        gui.logOutButton.setEnabled(false);
     }
 
     private void disableExcept(JButton button) {
@@ -136,6 +144,21 @@ public class Client {
         gui.createPartyButton.setEnabled(true);
         gui.joinPartyButton.setEnabled(true);
         gui.endPartyButton.setEnabled(true);
+        gui.logOutButton.setEnabled(true);
+    }
+
+    private void logout(ActionEvent e) {
+        int choice = JOptionPane.showConfirmDialog(gui.mainPanel, "Are you sure you want to log out and exit?", "Log out", JOptionPane.YES_NO_OPTION);
+        if (choice == 0) {
+            if (Auth.removeCachedToken()) {
+                JOptionPane.showMessageDialog(gui.mainPanel,
+                        "You have been logged out! The program will now exit.\n" +
+                                "Make sure the correct account is logged in on your browser before restarting.");
+                System.exit(0);
+            } else {
+                displayError("There was an error logging out!");
+            }
+        }
     }
 
     private void leaveParty(ActionEvent e) {
@@ -149,8 +172,8 @@ public class Client {
                 partyManager = null;
             }
         }
-        gui.connectionStatusLabel.setText("Not Connected");
-        gui.numMembersLabel.setText("Members: 0");
+        gui.connectionStatusLabel.setText("Not connected");
+        gui.numMembersLabel.setText("Not connected");
     }
 
     private void createParty(ActionEvent e) {
@@ -168,9 +191,10 @@ public class Client {
         if (success) {
             startMusicTask();
             startMemberMonitorTask();
+            gui.numMembersLabel.setText("Members: 0");
             disableExcept(gui.endPartyButton);
         } else {
-            JOptionPane.showMessageDialog(gui.mainPanel, "There was an error contacting the server!", "Error", JOptionPane.ERROR_MESSAGE);
+            displayError("There was an error contacting the server!");
         }
     }
 
@@ -190,10 +214,10 @@ public class Client {
                 startMusicTask();
                 gui.connectionStatusLabel.setText("Connected!");
             } else {
-                JOptionPane.showMessageDialog(gui.mainPanel, "Invalid party code!", "Error", JOptionPane.ERROR_MESSAGE);
+                displayError("Invalid party code!");
             }
         } catch (RuntimeException ex) {
-            JOptionPane.showMessageDialog(gui.mainPanel, "There was an error contacting the server!", "Error", JOptionPane.ERROR_MESSAGE);
+            displayError("There was an error contacting the server!");
         }
     }
 }

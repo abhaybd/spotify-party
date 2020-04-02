@@ -193,4 +193,8 @@ public class Auth {
             startRefreshThread();
         }
     }
+
+    public static boolean removeCachedToken() {
+        return tokenFile.delete();
+    }
 }

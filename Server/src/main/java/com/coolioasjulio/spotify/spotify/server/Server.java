@@ -59,6 +59,7 @@ public class Server {
         out.flush();
         Party p = new Party(new Member(s, in, out));
         partyMap.put(uuid, p);
+        System.out.printf("Party created with code: %s\nNum parties: %d\n", uuid, partyMap.size());
         try {
             while (!Thread.interrupted()) {
                 String line = in.readLine();
@@ -84,6 +85,7 @@ public class Server {
             e.printStackTrace();
         } finally {
             partyMap.remove(uuid);
+            System.out.printf("Party ended with code: %s\nNum parties: %d\n", uuid, partyMap.size());
             for (Member m : p.members) {
                 try {
                     m.socket.close();
