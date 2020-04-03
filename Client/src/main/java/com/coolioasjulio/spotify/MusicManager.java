@@ -10,6 +10,7 @@ import java.io.IOException;
 public class MusicManager {
     private PartyManager manager;
     private Gson gson;
+    private String lastSong;
     private boolean paused;
 
     public MusicManager(PartyManager manager) {
@@ -53,26 +54,25 @@ public class MusicManager {
 
         try {
             String line = manager.getIn().readLine();
-            MusicState state = gson.fromJson(line, MusicState.class);
             if (line == null) return false;
-
+            MusicState state = gson.fromJson(line, MusicState.class);
+            long clientDelay = System.currentTimeMillis() - state.timestamp;
+            System.out.println("Client delay: " + clientDelay);
             Result r = getPlaybackInfo();
             if (r == null) return true;
             var info = r.context;
-            // If we're more than 50ms out of sync or we're pausing, resync
-            // there's theoretically a 50ms delay on unpausing, but I doubt that'll be an issue
-            int currProgress = info.getProgress_ms();
             int forwardedPos = (int) (state.songPos + info.getTimestamp() - state.timestamp);
-            System.out.printf("%d - Desync: %d, oneWayLatency: %dms\n", System.currentTimeMillis(), (currProgress - forwardedPos), r.oneWayLatency);
-            if (!state.isPaused && (Math.abs(currProgress - forwardedPos) > 1500 || paused)) {
+            String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
+            if (!state.isPaused && paused || !uri.equals(lastSong)) {
                 paused = false;
-                String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
                 long currTime = System.currentTimeMillis();
-                int posMs = forwardedPos + (int)(currTime - info.getTimestamp() + r.oneWayLatency+800);
+                System.out.printf("Offset: %dms, latency: %dms\n", currTime - info.getTimestamp(), r.oneWayLatency);
+                int posMs = Math.max(0, forwardedPos + (int)(currTime - info.getTimestamp() + r.oneWayLatency + clientDelay));
                 Auth.getAPI().startResumeUsersPlayback()
                         .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
                         .position_ms(posMs)
                         .build().execute();
+                lastSong = uri;
             } else if (state.isPaused) {
                 Auth.getAPI().pauseUsersPlayback().build().execute();
                 paused = true;
