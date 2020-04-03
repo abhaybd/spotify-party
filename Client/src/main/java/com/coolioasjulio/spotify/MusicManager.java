@@ -10,20 +10,22 @@ import java.io.IOException;
 public class MusicManager {
     private PartyManager manager;
     private Gson gson;
+    private boolean paused;
 
     public MusicManager(PartyManager manager) {
         this.manager = manager;
         gson = new Gson();
     }
 
-    private CurrentlyPlayingContext getPlaybackInfo() throws IOException, SpotifyWebApiException {
+    private Result getPlaybackInfo() throws IOException, SpotifyWebApiException {
         long before = System.currentTimeMillis();
         var info = Auth.getAPI().getInformationAboutUsersCurrentPlayback().build().execute();
         long after = System.currentTimeMillis();
         if (info == null) return null;
         // Clone the info object, but average the before and after timestamps to estimate latency
         // This is necessary since the built in timestamp is broken
-        return new CurrentlyPlayingContext.Builder()
+        Result r = new Result();
+        r.context = new CurrentlyPlayingContext.Builder()
                 .setDevice(info.getDevice())
                 .setContext(info.getContext())
                 .setRepeat_state(info.getRepeat_state())
@@ -33,6 +35,13 @@ public class MusicManager {
                 .setProgress_ms(info.getProgress_ms())
                 .setTimestamp((before + after) / 2)
                 .build();
+        r.oneWayLatency = (after - before) / 2;
+        return r;
+    }
+
+    private class Result {
+        private CurrentlyPlayingContext context;
+        private long oneWayLatency;
     }
 
     /**
@@ -47,21 +56,26 @@ public class MusicManager {
             MusicState state = gson.fromJson(line, MusicState.class);
             if (line == null) return false;
 
-            String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
-            var info = getPlaybackInfo();
-            if (info == null) return true;
+            Result r = getPlaybackInfo();
+            if (r == null) return true;
+            var info = r.context;
             // If we're more than 50ms out of sync or we're pausing, resync
             // there's theoretically a 50ms delay on unpausing, but I doubt that'll be an issue
-            if (state.isPaused || Math.abs(info.getProgress_ms() - (state.songPos + (info.getTimestamp() - state.timestamp))) > 50) {
+            int currProgress = info.getProgress_ms();
+            int forwardedPos = (int) (state.songPos + info.getTimestamp() - state.timestamp);
+            System.out.printf("%d - Desync: %d, oneWayLatency: %dms\n", System.currentTimeMillis(), (currProgress - forwardedPos), r.oneWayLatency);
+            if (!state.isPaused && (Math.abs(currProgress - forwardedPos) > 1500 || paused)) {
+                paused = false;
+                String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
                 long currTime = System.currentTimeMillis();
-                int posMs = state.isPaused ? state.songPos : state.songPos + (int)(currTime - state.timestamp);
+                int posMs = forwardedPos + (int)(currTime - info.getTimestamp() + r.oneWayLatency+800);
                 Auth.getAPI().startResumeUsersPlayback()
                         .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
                         .position_ms(posMs)
                         .build().execute();
-            }
-            if (state.isPaused) {
+            } else if (state.isPaused) {
                 Auth.getAPI().pauseUsersPlayback().build().execute();
+                paused = true;
             }
             return true;
         } catch (IOException | SpotifyWebApiException e) {
@@ -73,8 +87,9 @@ public class MusicManager {
     public boolean pushMusicState() {
         if (!manager.isHost()) return false;
         try {
-            var info = getPlaybackInfo();
-            if (info == null) return true;
+            Result r = getPlaybackInfo();
+            if (r == null) return true;
+            var info = r.context;
             var state = new MusicState(info.getTimestamp(), info.getProgress_ms(), !info.getIs_playing(), info.getItem().getId());
             String json = gson.toJson(state);
             manager.getOut().println(json);

@@ -132,6 +132,7 @@ public class Server {
         } else if (req.id != null) {
             handleJoinSession(s, in, out, req);
         } else {
+            System.out.println("Request denied, unable to join group.");
             error(s, out);
         }
     }

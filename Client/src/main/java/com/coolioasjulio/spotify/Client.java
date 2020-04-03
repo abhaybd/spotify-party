@@ -46,10 +46,12 @@ public class Client {
 
     private void musicTask() {
         while (!Thread.interrupted()) {
+            boolean shouldSleep = false;
             synchronized (managerLock) {
                 if (partyManager != null && musicManager != null) {
                     try {
                         boolean running;
+                        shouldSleep = partyManager.isHost();
                         if (partyManager.isHost()) {
                             running = musicManager.pushMusicState();
                         } else {
@@ -68,11 +70,14 @@ public class Client {
                     }
                 }
             }
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                break;
+            if (shouldSleep) {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    break;
+                }
             }
+
         }
     }
 
