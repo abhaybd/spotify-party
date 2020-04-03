@@ -15,4 +15,5 @@ public class ClientGUI {
     public JTextField joinCodeJoinField;
     public JButton logOutButton;
     public JLabel usernameLabel;
+    public JLabel versionLabel;
 }

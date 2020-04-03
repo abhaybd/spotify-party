@@ -10,6 +10,7 @@ public class Client {
         c.start();
     }
 
+    private final String version = "v0.1-beta";
     private PartyManager partyManager;
     private MusicManager musicManager;
     private final Object managerLock = new Object();
@@ -24,6 +25,7 @@ public class Client {
     public void start() {
         gui = new ClientGUI();
 
+        gui.versionLabel.setText(version);
         gui.joinPartyButton.addActionListener(this::joinParty);
         gui.createPartyButton.addActionListener(this::createParty);
         gui.leavePartyButton.addActionListener(this::leaveParty);
