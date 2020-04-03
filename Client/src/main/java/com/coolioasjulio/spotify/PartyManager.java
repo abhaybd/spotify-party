@@ -1,12 +1,15 @@
 package com.coolioasjulio.spotify;
 
 import com.google.gson.Gson;
+import org.apache.commons.net.ntp.NTPUDPClient;
+import org.apache.commons.net.ntp.TimeInfo;
 
 import java.io.BufferedReader;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
+import java.net.InetAddress;
 import java.net.Socket;
 
 public class PartyManager implements Closeable {
@@ -62,17 +65,34 @@ public class PartyManager implements Closeable {
     private final Socket socket;
     private BufferedReader in;
     private PrintStream out;
+    private long networkTimeOffset;
 
     private PartyManager(boolean isHost, String id) {
         this.isHost = isHost;
         this.id = id;
         try {
+            networkTimeOffset = calculateNetworkTimeOffset();
             socket = new Socket(HOSTNAME, PORT);
             in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             out = new PrintStream(new PrintStream(socket.getOutputStream()));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private long calculateNetworkTimeOffset() throws IOException {
+        NTPUDPClient client = new NTPUDPClient();
+        // We want to timeout if a response takes longer than 10 seconds
+        client.setDefaultTimeout(1000);
+
+        InetAddress inetAddress = InetAddress.getByName("time.google.com");
+        TimeInfo timeInfo = client.getTime(inetAddress);
+        timeInfo.computeDetails();
+        return timeInfo.getOffset() != null ? timeInfo.getOffset() : 0;
+    }
+
+    public long getNetworkTime() {
+        return System.currentTimeMillis() + networkTimeOffset;
     }
 
     public void close() {

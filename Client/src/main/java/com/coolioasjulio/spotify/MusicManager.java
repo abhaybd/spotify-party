@@ -12,6 +12,7 @@ public class MusicManager {
     private Gson gson;
     private String lastSong;
     private boolean paused;
+    private Long unPauseTime = null;
 
     public MusicManager(PartyManager manager) {
         this.manager = manager;
@@ -19,9 +20,9 @@ public class MusicManager {
     }
 
     private Result getPlaybackInfo() throws IOException, SpotifyWebApiException {
-        long before = System.currentTimeMillis();
+        long before = manager.getNetworkTime();
         var info = Auth.getAPI().getInformationAboutUsersCurrentPlayback().build().execute();
-        long after = System.currentTimeMillis();
+        long after = manager.getNetworkTime();
         if (info == null) return null;
         // Clone the info object, but average the before and after timestamps to estimate latency
         // This is necessary since the built in timestamp is broken
@@ -40,11 +41,6 @@ public class MusicManager {
         return r;
     }
 
-    private class Result {
-        private CurrentlyPlayingContext context;
-        private long oneWayLatency;
-    }
-
     /**
      * This doesn't prompt the server, so it should be called fairly regularly.
      * It will block until data is read and processed.
@@ -56,27 +52,27 @@ public class MusicManager {
             String line = manager.getIn().readLine();
             if (line == null) return false;
             MusicState state = gson.fromJson(line, MusicState.class);
-            long clientDelay = System.currentTimeMillis() - state.timestamp;
+            long clientDelay = manager.getNetworkTime() - state.timestamp;
             System.out.println("Client delay: " + clientDelay);
             Result r = getPlaybackInfo();
             if (r == null) return true;
             var info = r.context;
-            int forwardedPos = (int) (state.songPos + info.getTimestamp() - state.timestamp);
+            int hostSongPos = (int) (state.songPos + info.getTimestamp() - state.timestamp);
             String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
-            if (!state.isPaused && paused || !uri.equals(lastSong)) {
-                paused = false;
-                long currTime = System.currentTimeMillis();
+            if (state.isPaused) {
+                Auth.getAPI().pauseUsersPlayback().build().execute();
+            } else if (paused || !uri.equals(lastSong) || Math.abs(hostSongPos - info.getProgress_ms()) > 3000) {
+                // resync on pause or song edge event, or if way out of sync (if host skips)
+                long currTime = manager.getNetworkTime();
                 System.out.printf("Offset: %dms, latency: %dms\n", currTime - info.getTimestamp(), r.oneWayLatency);
-                int posMs = Math.max(0, forwardedPos + (int)(currTime - info.getTimestamp() + r.oneWayLatency + clientDelay));
+                int posMs = Math.max(0, hostSongPos + (int)(currTime - info.getTimestamp() + r.oneWayLatency + clientDelay));
                 Auth.getAPI().startResumeUsersPlayback()
                         .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
                         .position_ms(posMs)
                         .build().execute();
                 lastSong = uri;
-            } else if (state.isPaused) {
-                Auth.getAPI().pauseUsersPlayback().build().execute();
-                paused = true;
             }
+            paused = state.isPaused;
             return true;
         } catch (IOException | SpotifyWebApiException e) {
             e.printStackTrace();
@@ -91,6 +87,16 @@ public class MusicManager {
             if (r == null) return true;
             var info = r.context;
             var state = new MusicState(info.getTimestamp(), info.getProgress_ms(), !info.getIs_playing(), info.getItem().getId());
+            if (!state.songID.equals(lastSong) || (unPauseTime != null && manager.getNetworkTime() < unPauseTime)) {
+                if (unPauseTime == null) {
+                    unPauseTime = manager.getNetworkTime() + 1000;
+                }
+                lastSong = state.songID;
+                paused = true;
+                state.isPaused = true; // pause all members for some period of time
+            } else if (manager.getNetworkTime() >= unPauseTime) {
+                unPauseTime = null;
+            }
             String json = gson.toJson(state);
             manager.getOut().println(json);
             manager.getOut().flush();
@@ -99,6 +105,11 @@ public class MusicManager {
             e.printStackTrace();
             throw new RuntimeException(e);
         }
+    }
+
+    private static class Result {
+        private CurrentlyPlayingContext context;
+        private long oneWayLatency;
     }
 
     static class MusicState {
