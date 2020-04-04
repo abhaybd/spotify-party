@@ -48,7 +48,7 @@ public class Client {
         while (!Thread.interrupted()) {
             boolean shouldCheck;
             synchronized (managerLock) {
-                shouldCheck = partyManager != null && partyManager.isHost();
+                shouldCheck = partyManager != null;
             }
             try {
                 if (shouldCheck) {

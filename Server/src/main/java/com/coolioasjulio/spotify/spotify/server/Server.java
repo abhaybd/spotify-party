@@ -90,6 +90,7 @@ public class Server {
                 CurrentlyPlayingContext info = party.host.api.getInformationAboutUsersCurrentPlayback().build().execute();
                 long after = System.currentTimeMillis();
                 int oneWayLatency = (int) ((after - before) / 2);
+                System.out.printf("Latency: %d\n", oneWayLatency);
                 System.out.printf("Party: %s, pause=%b, progress=%d\n", party.uuid, !info.getIs_playing(), info.getProgress_ms());
                 // perform necessary steps to sync party
                 syncParty(party, info, oneWayLatency);
@@ -115,12 +116,9 @@ public class Server {
                     .collect(Collectors.toList());
         } else if (party.paused || !uri.equals(party.lastSong)) {
             // resync on pause or song edge event, or if way out of sync (if host skips)
-            futures = party.members.stream().map(m -> m.api
-                    .startResumeUsersPlayback()
-                    .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
-                    .position_ms(info.getProgress_ms() + oneWayLatency)
-                    .build()
-                    .executeAsync()
+            int songPos = info.getProgress_ms() + 2*oneWayLatency;
+            futures = party.members.stream()
+                    .map(m -> playAtPosAsync(m.api, uri, songPos)
                     .exceptionally(e -> String.valueOf(toRemove.add(m))))
                     .collect(Collectors.toList());
             party.lastSong = uri;
@@ -135,6 +133,14 @@ public class Server {
                 party.host.out.flush();
             }
         }
+    }
+
+    private CompletableFuture<String> playAtPosAsync(SpotifyApi api, String uri, int pos) {
+        return api.startResumeUsersPlayback()
+                .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
+                .position_ms(pos)
+                .build()
+                .executeAsync();
     }
 
     private void handleCreateSession(Socket s, BufferedReader in, PrintStream out, InitialRequest req) {
