@@ -19,6 +19,11 @@ public class PartyManager implements Closeable {
     private static class InitialRequest {
         private boolean create;
         private String id;
+        private String accessToken;
+
+        public InitialRequest(String accessToken) {
+            this.accessToken = accessToken;
+        }
     }
 
     public static PartyManager createParty() {
@@ -28,7 +33,7 @@ public class PartyManager implements Closeable {
         } catch (RuntimeException e) {
             return null;
         }
-        var req = new InitialRequest();
+        var req = new InitialRequest(Auth.getAccessToken());
         req.create = true;
         manager.out.println(new Gson().toJson(req));
         manager.out.flush();
@@ -43,7 +48,7 @@ public class PartyManager implements Closeable {
 
     public static PartyManager joinParty(String code) {
         var manager = new PartyManager(false, code);
-        var req = new InitialRequest();
+        var req = new InitialRequest(Auth.getAccessToken());
         req.create = false;
         req.id = code;
         manager.out.println(new Gson().toJson(req));
@@ -62,9 +67,9 @@ public class PartyManager implements Closeable {
 
     private boolean isHost;
     private String id;
-    private final Socket socket;
-    private BufferedReader in;
-    private PrintStream out;
+    public final Socket socket;
+    public final BufferedReader in;
+    public final PrintStream out;
     private long networkTimeOffset;
 
     private PartyManager(boolean isHost, String id) {
@@ -109,13 +114,5 @@ public class PartyManager implements Closeable {
 
     public String getId() {
         return id;
-    }
-
-    public BufferedReader getIn() {
-        return in;
-    }
-
-    public PrintStream getOut() {
-        return out;
     }
 }

@@ -12,10 +12,8 @@ public class Client {
 
     private final String version = "v0.1-beta";
     private PartyManager partyManager;
-    private MusicManager musicManager;
     private final Object managerLock = new Object();
-    private Thread musicThread;
-    private Thread memberMonitorThread;
+    private Thread monitorThread;
     private ClientGUI gui;
 
     public Client() {
@@ -46,44 +44,7 @@ public class Client {
         JOptionPane.showMessageDialog(gui.mainPanel, error, "Error", JOptionPane.ERROR_MESSAGE);
     }
 
-    private void musicTask() {
-        while (!Thread.interrupted()) {
-            boolean shouldSleep = false;
-            synchronized (managerLock) {
-                if (partyManager != null && musicManager != null) {
-                    try {
-                        boolean running;
-                        shouldSleep = partyManager.isHost();
-                        if (partyManager.isHost()) {
-                            running = musicManager.pushMusicState();
-                        } else {
-                            running = musicManager.pullMusicState();
-                        }
-                        if (!running) {
-                            new Thread(() -> JOptionPane.showMessageDialog(gui.mainPanel,
-                                    "The party has ended!", "Info", JOptionPane.INFORMATION_MESSAGE)).start();
-                            leaveParty(null);
-                            break;
-                        }
-                    } catch (RuntimeException e) {
-                        new Thread(() -> displayError("An error occurred! Restart the program!")).start();
-                        leaveParty(null);
-                        break;
-                    }
-                }
-            }
-            if (shouldSleep) {
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException e) {
-                    break;
-                }
-            }
-
-        }
-    }
-
-    private void memberMonitorTask() {
+    private void monitorTask() {
         while (!Thread.interrupted()) {
             boolean shouldCheck;
             synchronized (managerLock) {
@@ -91,11 +52,22 @@ public class Client {
             }
             try {
                 if (shouldCheck) {
-                    String line = partyManager.getIn().readLine();
-                    int i = Integer.parseInt(line.strip());
-                    gui.numMembersLabel.setText("Members: " + i);
+                    String line = partyManager.in.readLine();
+                    if (line == null) {
+                        new Thread(() -> JOptionPane.showMessageDialog(gui.mainPanel,
+                                "The party has ended!", "Info", JOptionPane.INFORMATION_MESSAGE)).start();
+                        leaveParty(null);
+                        break;
+                    }
+                    if (partyManager.isHost()) {
+                        int i = Integer.parseInt(line.strip());
+                        gui.numMembersLabel.setText("Members: " + i);
+                    }
                 }
-            } catch (IOException | NullPointerException | NumberFormatException ignored) {
+            } catch (IOException e) {
+                break;
+            } catch(NullPointerException | NumberFormatException e) {
+                e.printStackTrace();
             }
             try {
                 Thread.sleep(100);
@@ -105,31 +77,17 @@ public class Client {
         }
     }
 
-    private void startMemberMonitorTask() {
-        if (memberMonitorThread == null || !memberMonitorThread.isAlive()) {
-            memberMonitorThread = new Thread(this::memberMonitorTask);
-            memberMonitorThread.setDaemon(true);
-            memberMonitorThread.start();
-        }
-    }
-
-    private void stopMemberMonitorTask() {
-        if (memberMonitorThread != null) {
-            memberMonitorThread.interrupt();
-        }
-    }
-
-    private void startMusicTask() {
-        if (musicThread == null || !musicThread.isAlive()) {
-            musicThread = new Thread(this::musicTask);
-            musicThread.setDaemon(true);
-            musicThread.start();
-        }
-    }
-
-    private void stopMusicTask() {
-        if (musicThread != null) {
-            musicThread.interrupt();
+    private void setMonitorTaskEnabled(boolean enabled) {
+        if (enabled) {
+            if (monitorThread == null || !monitorThread.isAlive()) {
+                monitorThread = new Thread(this::monitorTask);
+                monitorThread.setDaemon(true);
+                monitorThread.start();
+            }
+        } else {
+            if (monitorThread != null) {
+                monitorThread.interrupt();
+            }
         }
     }
 
@@ -170,12 +128,10 @@ public class Client {
 
     private void leaveParty(ActionEvent e) {
         enableAllButtons();
-        stopMusicTask();
-        stopMemberMonitorTask();
+        setMonitorTaskEnabled(false);
         synchronized (managerLock) {
             if (partyManager != null) {
                 partyManager.close();
-                musicManager = null;
                 partyManager = null;
             }
         }
@@ -190,14 +146,12 @@ public class Client {
                 partyManager = PartyManager.createParty();
                 success = partyManager != null;
                 if (success) {
-                    musicManager = new MusicManager(partyManager);
                     gui.joinCodeCreateField.setText(partyManager.getId());
                 }
             }
         }
         if (success) {
-            startMusicTask();
-            startMemberMonitorTask();
+            setMonitorTaskEnabled(true);
             gui.numMembersLabel.setText("Members: 0");
             disableExcept(gui.endPartyButton);
         } else {
@@ -214,12 +168,11 @@ public class Client {
                 synchronized (managerLock) {
                     if (partyManager == null) {
                         partyManager = pm;
-                        musicManager = new MusicManager(partyManager);
                         gui.joinCodeCreateField.setText(partyManager.getId());
                     }
                 }
-                startMusicTask();
                 gui.connectionStatusLabel.setText("Connected!");
+                setMonitorTaskEnabled(true);
             } else {
                 displayError("Invalid party code!");
             }

@@ -1,6 +1,10 @@
 package com.coolioasjulio.spotify.spotify.server;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonParser;
+import com.wrapper.spotify.SpotifyApi;
+import com.wrapper.spotify.exceptions.SpotifyWebApiException;
+import com.wrapper.spotify.model_objects.miscellaneous.CurrentlyPlayingContext;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -8,12 +12,16 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 public class Server {
     public static void main(String[] args) {
@@ -28,13 +36,16 @@ public class Server {
 
     private int port;
     private Map<UUID, Party> partyMap;
+    private ServerSocket serverSocket;
+
     public Server(int port) {
         this.port = port;
         partyMap = Collections.synchronizedMap(new HashMap<>());
     }
 
     public void start() throws IOException {
-        ServerSocket serverSocket = new ServerSocket(port);
+        serverSocket = new ServerSocket(port);
+        Runtime.getRuntime().addShutdownHook(new Thread(this::closeAllSessions));
         while (!Thread.interrupted()) {
             try {
                 System.out.println("Waiting for connection...");
@@ -42,9 +53,23 @@ public class Server {
                 System.out.println("Received connection from: " + s.getInetAddress());
                 launchSession(s);
                 Thread.yield();
+            } catch (SocketException e) {
+                break;
             } catch (IOException e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    private void closeAllSessions() {
+        System.out.println("Closing all sessions!");
+        try {
+            serverSocket.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        for (UUID uuid : partyMap.keySet()) {
+            partyMap.get(uuid).close();
         }
     }
 
@@ -53,46 +78,80 @@ public class Server {
         t.start();
     }
 
-    private void handleCreateSession(Socket s, BufferedReader in, PrintStream out) {
+    private void sessionHostTask(Party party) throws IOException {
+        while (!Thread.interrupted()) {
+            // If the host left, end the party
+            if (party.host.socket.isClosed()) {
+                break;
+            }
+            try {
+                // Get info about host playback
+                long before = System.currentTimeMillis();
+                CurrentlyPlayingContext info = party.host.api.getInformationAboutUsersCurrentPlayback().build().execute();
+                long after = System.currentTimeMillis();
+                int oneWayLatency = (int) ((after - before) / 2);
+                System.out.printf("Party: %s, pause=%b, progress=%d\n", party.uuid, !info.getIs_playing(), info.getProgress_ms());
+                // perform necessary steps to sync party
+                syncParty(party, info, oneWayLatency);
+                // sleep between resyncs
+                Thread.sleep(500);
+            } catch (SpotifyWebApiException | InterruptedException e) {
+                e.printStackTrace();
+                break;
+            }
+        }
+    }
+
+    private void syncParty(Party party, CurrentlyPlayingContext info, int oneWayLatency) {
+        String uri = info.getItem().getUri();
+        // sync members, note which ones to remove
+        List<Member> toRemove = Collections.synchronizedList(new LinkedList<>());
+        List<CompletableFuture<?>> futures = null;
+        if (!info.getIs_playing()) {
+            futures = party.members.stream().map(m -> m.api.pauseUsersPlayback()
+                    .build()
+                    .executeAsync()
+                    .exceptionally(e -> String.valueOf(toRemove.add(m))))
+                    .collect(Collectors.toList());
+        } else if (party.paused || !uri.equals(party.lastSong)) {
+            // resync on pause or song edge event, or if way out of sync (if host skips)
+            futures = party.members.stream().map(m -> m.api
+                    .startResumeUsersPlayback()
+                    .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
+                    .position_ms(info.getProgress_ms() + oneWayLatency)
+                    .build()
+                    .executeAsync()
+                    .exceptionally(e -> String.valueOf(toRemove.add(m))))
+                    .collect(Collectors.toList());
+            party.lastSong = uri;
+        }
+        party.paused = !info.getIs_playing();
+        if (futures != null) {
+            // wait for all calls to finish
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            // remove members who left
+            if (party.members.removeAll(toRemove)) {
+                party.host.out.println(party.members.size());
+                party.host.out.flush();
+            }
+        }
+    }
+
+    private void handleCreateSession(Socket s, BufferedReader in, PrintStream out, InitialRequest req) {
         UUID uuid = UUID.randomUUID();
         out.println(uuid.toString());
         out.flush();
-        Party p = new Party(new Member(s, in, out));
-        partyMap.put(uuid, p);
+        Party party = new Party(uuid, new Member(s, in, out, Auth.createAPI(req.accessToken)));
+        partyMap.put(uuid, party);
         System.out.printf("Party created with code: %s\nNum parties: %d\n", uuid, partyMap.size());
         try {
-            while (!Thread.interrupted()) {
-                String line = in.readLine();
-                if (line == null) break; // stream closed
-                System.out.printf("%s : %s\n", p.host.socket.getInetAddress(), line);
-                List<Member> toRemove = new ArrayList<>();
-                for (int i = 0; i < p.members.size(); i++) {
-                    Member m = p.members.get(i);
-                    m.out.println(line);
-                    m.out.flush();
-                    if (m.out.checkError()) {
-                        m.socket.close();
-                        toRemove.add(m);
-                    }
-                }
-                if (p.members.removeAll(toRemove)) {
-                    out.println(p.members.size());
-                    out.flush();
-                }
-                Thread.yield();
-            }
+            sessionHostTask(party);
         } catch (IOException e) {
             e.printStackTrace();
         } finally {
             partyMap.remove(uuid);
             System.out.printf("Party ended with code: %s\nNum parties: %d\n", uuid, partyMap.size());
-            for (Member m : p.members) {
-                try {
-                    m.socket.close();
-                } catch (IOException ex) {
-                    ex.printStackTrace();
-                }
-            }
+            party.close();
         }
     }
 
@@ -100,12 +159,13 @@ public class Server {
         UUID uuid = null;
         try {
             uuid = UUID.fromString(req.id);
-        } catch (IllegalArgumentException ignored) {}
+        } catch (IllegalArgumentException ignored) {
+        }
         if (uuid != null && partyMap.containsKey(uuid)) {
             out.println(uuid.toString());
             out.flush();
             Party party = partyMap.get(uuid);
-            party.members.add(new Member(s, in, out));
+            party.members.add(new Member(s, in, out, Auth.createAPI(req.accessToken)));
             party.host.out.println(party.members.size());
             party.host.out.flush();
         } else {
@@ -128,7 +188,7 @@ public class Server {
         }
         System.out.println("Received request: " + req.toString());
         if (req.create) {
-            handleCreateSession(s, in, out);
+            handleCreateSession(s, in, out, req);
         } else if (req.id != null) {
             handleJoinSession(s, in, out, req);
         } else {
@@ -150,34 +210,30 @@ public class Server {
     private static class InitialRequest {
         private boolean create;
         private String id;
+        private String accessToken;
 
         @Override
         public String toString() {
-            return String.format("InitialRequest(create=%b, id=%s)", create, id);
-        }
-    }
-
-    private static class MusicState {
-        public long timestamp;
-        public int songPos;
-        public boolean isPaused;
-        public String songID;
-
-        public MusicState(long timestamp, int songPos, boolean isPaused, String songID) {
-            this.timestamp = timestamp;
-            this.songPos = songPos;
-            this.isPaused = isPaused;
-            this.songID = songID;
+            return String.format("InitialRequest(create=%b, id=%s, token=%s)", create, id, accessToken);
         }
     }
 
     private static class Party {
+        private UUID uuid;
         public Member host;
         public List<Member> members;
+        public boolean paused = false;
+        public String lastSong = null;
 
-        public Party(Member host) {
+        public Party(UUID uuid, Member host) {
+            this.uuid = uuid;
             this.host = host;
             members = Collections.synchronizedList(new ArrayList<>());
+        }
+
+        public void close() {
+            host.close();
+            members.forEach(Member::close);
         }
     }
 
@@ -185,10 +241,22 @@ public class Server {
         public Socket socket;
         public BufferedReader in;
         public PrintStream out;
-        public Member(Socket socket, BufferedReader in, PrintStream out) {
-            this.socket = socket;;
+        public SpotifyApi api;
+
+        public Member(Socket socket, BufferedReader in, PrintStream out, SpotifyApi api) {
+            this.socket = socket;
             this.in = in;
             this.out = out;
+            this.api = api;
+        }
+
+        public void close() {
+            try {
+                System.out.printf("Closing socket at address: %s\n", socket.getInetAddress());
+                socket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
     }
 }

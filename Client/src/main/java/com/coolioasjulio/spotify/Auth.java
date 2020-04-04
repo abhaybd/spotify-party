@@ -24,7 +24,6 @@ public class Auth {
     private static final String REDIRECT_URI = String.format("http://localhost:%d", PORT);
     private static final File tokenFile = new File(System.getProperty("user.home") + File.separator + ".spotifyparty", "token");
     private static String clientID, clientSecret;
-    private static String accessToken, refreshToken;
     private static SpotifyApi api;
     private static Thread refreshThread;
 
@@ -57,11 +56,11 @@ public class Auth {
     }
 
     public static String getAccessToken() {
-        return accessToken;
+        return getAPI().getAccessToken();
     }
 
     public static String getRefreshToken() {
-        return refreshToken;
+        return getAPI().getRefreshToken();
     }
 
     private static void refreshTask() {
@@ -132,15 +131,13 @@ public class Auth {
         try {
             // exchange the code for the access and refresh tokens
             var cred = getAPI().authorizationCode(code).build().execute();
-            accessToken = cred.getAccessToken();
-            refreshToken = cred.getRefreshToken();
-            getAPI().setAccessToken(accessToken);
-            getAPI().setRefreshToken(refreshToken);
+            getAPI().setAccessToken(cred.getAccessToken());
+            getAPI().setRefreshToken(cred.getRefreshToken());
 
             // Save the refresh token to disk
             tokenFile.getParentFile().mkdirs();
             PrintStream out = new PrintStream(tokenFile);
-            out.println(refreshToken);
+            out.println(cred.getRefreshToken());
             out.close();
         } catch (IOException | SpotifyWebApiException e) {
             throw new RuntimeException(e);
@@ -152,7 +149,6 @@ public class Auth {
         if (getAPI().getRefreshToken() == null) {
             try (Scanner in = new Scanner(new FileInputStream(tokenFile))) {
                 String token = in.nextLine();
-                refreshToken = token;
                 getAPI().setRefreshToken(token);
             } catch (FileNotFoundException e) {
                 throw new RuntimeException(e);
@@ -161,7 +157,6 @@ public class Auth {
         // Now use the refresh token to get a new access token
         try {
             var cred = getAPI().authorizationCodeRefresh().build().execute();
-            accessToken = cred.getAccessToken();
             getAPI().setAccessToken(cred.getAccessToken());
         } catch (IOException | SpotifyWebApiException e) {
             throw new RuntimeException(e);
