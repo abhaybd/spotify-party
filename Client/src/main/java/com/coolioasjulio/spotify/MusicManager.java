@@ -94,7 +94,7 @@ public class MusicManager {
                 lastSong = state.songID;
                 paused = true;
                 state.isPaused = true; // pause all members for some period of time
-            } else if (manager.getNetworkTime() >= unPauseTime) {
+            } else if (unPauseTime != null && manager.getNetworkTime() >= unPauseTime) {
                 unPauseTime = null;
             }
             String json = gson.toJson(state);

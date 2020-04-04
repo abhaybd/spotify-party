@@ -66,6 +66,7 @@ public class Client {
                             break;
                         }
                     } catch (RuntimeException e) {
+                        e.printStackTrace();
                         new Thread(() -> displayError("An error occurred! Restart the program!")).start();
                         leaveParty(null);
                         break;
