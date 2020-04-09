@@ -13,17 +13,16 @@ public class Playground {
         Gson gson = new Gson();
         if (false) {
             var info = Auth.getAPI().getInformationAboutUsersCurrentPlayback().build().execute();
-            var state = new MusicManager.MusicState(info.getTimestamp(), info.getProgress_ms(), !info.getIs_playing(), info.getItem().getId());
+            var state = new MusicManager.MusicState(info.getTimestamp(), info.getProgress_ms(), !info.getIs_playing(), info.getItem().getUri());
             String json = gson.toJson(state);
             System.out.println(json);
         } else {
             var state = gson.fromJson("{\"timestamp\":1585782330707,\"songPos\":4618,\"isPaused\":false,\"songID\":\"3bjLCKsBNSFyx6Gfsb7X4h\"}", MusicManager.MusicState.class);
             try {
-                String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
                 long currTime = System.currentTimeMillis();
                 int posMs = state.isPaused ? state.songPos : state.songPos + (int)(currTime - state.timestamp);
                 Auth.getAPI().startResumeUsersPlayback()
-                        .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
+                        .uris(JsonParser.parseString(String.format("[\"%s\"]", state.uri)).getAsJsonArray())
                         .position_ms(posMs)
                         .build().execute();
                 if (state.isPaused) {

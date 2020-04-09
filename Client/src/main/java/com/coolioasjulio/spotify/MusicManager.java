@@ -58,19 +58,21 @@ public class MusicManager {
             if (r == null) return true;
             var info = r.context;
             int hostSongPos = (int) (state.songPos + info.getTimestamp() - state.timestamp);
-            String uri = Auth.getAPI().getTrack(state.songID).build().execute().getUri();
+            long currTime = manager.getNetworkTime();
+            System.out.printf("Offset: %dms, latency: %dms\n", currTime - info.getTimestamp(), r.oneWayLatency);
+            int posMs = Math.max(0, hostSongPos + (int) (currTime - info.getTimestamp() + r.oneWayLatency + clientDelay));
             if (state.isPaused) {
                 Auth.getAPI().pauseUsersPlayback().build().execute();
-            } else if (paused || !uri.equals(lastSong) || Math.abs(hostSongPos - info.getProgress_ms()) > 3000) {
-                // resync on pause or song edge event, or if way out of sync (if host skips)
-                long currTime = manager.getNetworkTime();
-                System.out.printf("Offset: %dms, latency: %dms\n", currTime - info.getTimestamp(), r.oneWayLatency);
-                int posMs = Math.max(0, hostSongPos + (int)(currTime - info.getTimestamp() + r.oneWayLatency + clientDelay));
+            } else if (!state.uri.equals(lastSong)) {
+                // start new song when song changes
                 Auth.getAPI().startResumeUsersPlayback()
-                        .uris(JsonParser.parseString(String.format("[\"%s\"]", uri)).getAsJsonArray())
+                        .uris(JsonParser.parseString(String.format("[\"%s\"]", state.uri)).getAsJsonArray())
                         .position_ms(posMs)
                         .build().execute();
-                lastSong = uri;
+                lastSong = state.uri;
+            } else if (paused || Math.abs(hostSongPos - info.getProgress_ms()) > 3000) {
+                // seek to correct position when unpaused or out of sync
+                Auth.getAPI().seekToPositionInCurrentlyPlayingTrack(posMs).build().execute();
             }
             paused = state.isPaused;
             return true;
@@ -86,12 +88,12 @@ public class MusicManager {
             Result r = getPlaybackInfo();
             if (r == null) return true;
             var info = r.context;
-            var state = new MusicState(info.getTimestamp(), info.getProgress_ms(), !info.getIs_playing(), info.getItem().getId());
-            if (!state.songID.equals(lastSong) || (unPauseTime != null && manager.getNetworkTime() < unPauseTime)) {
+            var state = new MusicState(info.getTimestamp(), info.getProgress_ms(), !info.getIs_playing(), info.getItem().getUri());
+            if (!state.uri.equals(lastSong) || (unPauseTime != null && manager.getNetworkTime() < unPauseTime)) {
                 if (unPauseTime == null) {
                     unPauseTime = manager.getNetworkTime() + 1000;
                 }
-                lastSong = state.songID;
+                lastSong = state.uri;
                 paused = true;
                 state.isPaused = true; // pause all members for some period of time
             } else if (unPauseTime != null && manager.getNetworkTime() >= unPauseTime) {
@@ -116,13 +118,13 @@ public class MusicManager {
         public long timestamp;
         public int songPos;
         public boolean isPaused;
-        public String songID;
+        public String uri;
 
-        public MusicState(long timestamp, int songPos, boolean isPaused, String songID) {
+        public MusicState(long timestamp, int songPos, boolean isPaused, String uri) {
             this.timestamp = timestamp;
             this.songPos = songPos;
             this.isPaused = isPaused;
-            this.songID = songID;
+            this.uri = uri;
         }
     }
 }
